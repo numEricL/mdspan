@@ -60,23 +60,6 @@ constexpr auto abs(const std::integral_constant<Signed, val>&) {
   return std::integral_constant<Signed, (val < 0 ? -val : val)>();
 }
 
-template <class IndexT, class T0, class T1>
-MDSPAN_INLINE_FUNCTION
-constexpr auto absminus(const T0 &v0, const T1 &v1) {
-    IndexT v0i = IndexT(v0);
-    IndexT v1i = IndexT(v1);
-  return (v0i > v1i) ? v0i - v1i : v1i - v0i;
-}
-
-template <class IndexT, class T0, T0 v0, class T1, T1 v1>
-MDSPAN_INLINE_FUNCTION
-constexpr auto absminus(const std::integral_constant<T0, v0> &,
-                      const std::integral_constant<T1, v1> &) {
-    IndexT v0i = IndexT(v0);
-    IndexT v1i = IndexT(v1);
-    return (v0i > v1i) ? v0i - v1i : v1i - v0i;
-}
-
 // Mapping from submapping ranks to srcmapping ranks
 // InvMapRank is an index_sequence, which we build recursively
 // to contain the mapped indices.
@@ -107,71 +90,36 @@ template <class OffsetType, class ExtentType, class StrideType>
 struct is_strided_slice<
     strided_slice<OffsetType, ExtentType, StrideType>> : std::true_type {};
 
-// Traits for pair like things
-template <class T>
-struct pair_like_traits : std::false_type {
-    using first_type = void;
-    using second_type = void;
-};
-
-template <class T1, class T2>
-struct pair_like_traits<std::pair<T1, T2>> {
-  using first_type = T1;
-  using second_type = T2;
-  static constexpr bool value = true;
-};
-
-template <class T1, class T2>
-struct pair_like_traits<std::tuple<T1, T2>> {
-  using first_type = T1;
-  using second_type = T2;
-  static constexpr bool value = true;
-};
-
-template <class T1, class T2>
-struct pair_like_traits<tuple<T1, T2>> {
-  using first_type = T1;
-  using second_type = T2;
-  static constexpr bool value = true;
-};
-
-template <class T>
-struct pair_like_traits<std::complex<T>> {
-  using first_type = T;
-  using second_type = T;
-  static constexpr bool value = true;
-};
-
-template <class T>
-struct pair_like_traits<std::array<T, 2>> {
-  using first_type = T;
-  using second_type = T;
-  static constexpr bool value = true;
-};
-
-template <class T, class = void>
-struct integral_constant_pair_like : std::false_type {};
-
-template <class T>
-struct integral_constant_pair_like<
-    T, std::void_t<typename pair_like_traits<T>::first_type,
-                   typename pair_like_traits<T>::second_type>>
-{
-    static constexpr bool value =
-        mdspan_is_integral_constant<typename pair_like_traits<T>::first_type>::value &&
-        mdspan_is_integral_constant<typename pair_like_traits<T>::second_type>::value;
-};
-
 // Helper for identifying valid pair like things
-template <class T, class IndexType>
-struct index_pair_like : std::conditional_t<
-    pair_like_traits<T>::value,
-    std::integral_constant<bool,
-        std::is_convertible_v<typename pair_like_traits<T>::first_type, IndexType> &&
-        std::is_convertible_v<typename pair_like_traits<T>::second_type, IndexType>
-    >,
-    std::false_type
-> {};
+template <class T, class IndexType> struct index_pair_like : std::false_type {};
+
+template <class IdxT1, class IdxT2, class IndexType>
+struct index_pair_like<std::pair<IdxT1, IdxT2>, IndexType> {
+  static constexpr bool value = std::is_convertible_v<IdxT1, IndexType> &&
+                                std::is_convertible_v<IdxT2, IndexType>;
+};
+
+template <class IdxT1, class IdxT2, class IndexType>
+struct index_pair_like<std::tuple<IdxT1, IdxT2>, IndexType> {
+  static constexpr bool value = std::is_convertible_v<IdxT1, IndexType> &&
+                                std::is_convertible_v<IdxT2, IndexType>;
+};
+
+template <class IdxT1, class IdxT2, class IndexType>
+struct index_pair_like<tuple<IdxT1, IdxT2>, IndexType> {
+  static constexpr bool value = std::is_convertible_v<IdxT1, IndexType> &&
+                                std::is_convertible_v<IdxT2, IndexType>;
+};
+
+template <class IdxT, class IndexType>
+struct index_pair_like<std::complex<IdxT>, IndexType> {
+  static constexpr bool value = std::is_convertible_v<IdxT, IndexType>;
+};
+
+template <class IdxT, class IndexType>
+struct index_pair_like<std::array<IdxT, 2>, IndexType> {
+  static constexpr bool value = std::is_convertible_v<IdxT, IndexType>;
+};
 
 // first_of(slice): getting begin of slice specifier range
 MDSPAN_TEMPLATE_REQUIRES(
@@ -336,37 +284,10 @@ last_of(std::integral_constant<size_t, k>, const Extents &,
 }
 
 // get stride of slices
-
-// For integral and full_extent_t return 1
-MDSPAN_TEMPLATE_REQUIRES(
-  class Slice,
-  /* requires */(!index_pair_like<Slice, size_t>::value)
-)
+template <class T>
 MDSPAN_INLINE_FUNCTION
-constexpr auto stride_of(const Slice &) {
+constexpr auto stride_of(const T &) {
   return integral_constant<size_t, 1>();
-}
-
-MDSPAN_TEMPLATE_REQUIRES(
-  class Slice,
-  /* requires */(index_pair_like<Slice, size_t>::value &&
-                 integral_constant_pair_like<Slice>::value)
-)
-MDSPAN_INLINE_FUNCTION
-constexpr auto stride_of(const Slice&) {
-    return std::integral_constant<std::ptrdiff_t, (
-        pair_like_traits<Slice>::first_type::value <=
-        pair_like_traits<Slice>::second_type::value ? 1 : -1)>();
-}
-
-MDSPAN_TEMPLATE_REQUIRES(
-  class Slice,
-  /* requires */(index_pair_like<Slice, size_t>::value &&
-                 !integral_constant_pair_like<Slice>::value)
-)
-MDSPAN_INLINE_FUNCTION
-constexpr auto stride_of(const Slice& s) {
-  return get<0>(s) <= get<1>(s)? 1 : -1;
 }
 
 template <class OffsetType, class ExtentType, class StrideType>
@@ -414,13 +335,13 @@ template <class Arg0, class Arg1> struct StaticExtentFromRange {
 template <class Integral0, Integral0 val0, class Integral1, Integral1 val1>
 struct StaticExtentFromRange<std::integral_constant<Integral0, val0>,
                              std::integral_constant<Integral1, val1>> {
-  constexpr static size_t value = absminus<size_t>(val1, val0);
+  constexpr static size_t value = val1 - val0;
 };
 
 template <class Integral0, Integral0 val0, class Integral1, Integral1 val1>
 struct StaticExtentFromRange<integral_constant<Integral0, val0>,
                              integral_constant<Integral1, val1>> {
-  constexpr static size_t value = absminus<size_t>(val1, val0);
+  constexpr static size_t value = val1 - val0;
 };
 
 // compute new static extent from strided_slice, preserving static
@@ -463,9 +384,10 @@ struct extents_constructor {
         extents_constructor<K - 1, Extents, NewExtents..., new_static_extent>;
     using index_t = typename Extents::index_type;
     return next_t::next_extent(
-        ext, slices_and_extents..., absminus<index_t>(
-            last_of(std::integral_constant<size_t, Extents::rank() - K>(), ext, sl),
-            first_of(sl)));
+        ext, slices_and_extents...,
+        index_t(last_of(std::integral_constant<size_t, Extents::rank() - K>(), ext,
+                        sl)) -
+            index_t(first_of(sl)));
   }
 
   MDSPAN_TEMPLATE_REQUIRES(
